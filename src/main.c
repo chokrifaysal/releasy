@@ -1,6 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <getopt.h>
 #include "releasy.h"
-#include "ui.h"
 #include "git_ops.h"
+#include "deploy.h"
+#include "ui.h"
 
 releasy_config_t g_config = {0};
 

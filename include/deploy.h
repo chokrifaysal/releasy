@@ -2,6 +2,7 @@
 #define RELEASY_DEPLOY_H
 
 #include <json-c/json.h>
+#include <string.h>
 #include "releasy.h"
 
 #define DEPLOY_ERR_CONFIG_NOT_FOUND -300
@@ -67,14 +68,19 @@ typedef struct {
     int is_dry_run;
 } deploy_context_t;
 
+// Core deployment functions
 int deploy_init(deploy_context_t *ctx);
 int deploy_load_config(deploy_context_t *ctx, const char *config_path);
 int deploy_set_target(deploy_context_t *ctx, const char *target_name);
 int deploy_execute(deploy_context_t *ctx, const char *version);
 int deploy_rollback(deploy_context_t *ctx);
 int deploy_get_status(deploy_context_t *ctx, deploy_status_t *status);
+
+// Helper functions
 const char *deploy_status_string(deploy_status_t status);
 const char *deploy_error_string(int error_code);
 void deploy_cleanup(deploy_context_t *ctx);
+void deploy_free_hooks(deploy_hook_t *hooks, int count);
+void deploy_free_target(deploy_target_t *target);
 
 #endif 
