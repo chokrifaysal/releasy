@@ -36,6 +36,16 @@ install(TARGETS releasy
 )
 
 enable_testing()
+
 add_executable(test_semver tests/test_semver.c src/semver.c)
 target_include_directories(test_semver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-add_test(NAME test_semver COMMAND test_semver) 
+add_test(NAME test_semver COMMAND test_semver)
+
+add_executable(test_git_ops tests/test_git_ops.c src/git_ops.c src/semver.c)
+target_include_directories(test_git_ops 
+    PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${LIBGIT2_INCLUDE_DIRS}
+)
+target_link_libraries(test_git_ops PRIVATE ${LIBGIT2_LIBRARIES})
+add_test(NAME test_git_ops COMMAND test_git_ops ${CMAKE_CURRENT_SOURCE_DIR}) 
