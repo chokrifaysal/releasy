@@ -7,14 +7,95 @@
 static int git_ops_get_signature(git_context_t *ctx) {
     if (ctx->signature) return RELEASY_SUCCESS;
     
+    int error = git_ops_ensure_user_config(ctx);
+    if (error) return error;
+    
+    error = git_signature_now(&ctx->signature, ctx->user_name, ctx->user_email);
+    return error ? GIT_ERR_SIGN_FAILED : RELEASY_SUCCESS;
+}
+
+int git_ops_set_user(git_context_t *ctx, const char *name, const char *email) {
+    if (!ctx || !name || !email) return RELEASY_ERROR;
+    
+    char *new_name = strdup(name);
+    if (!new_name) return RELEASY_ERROR;
+    
+    char *new_email = strdup(email);
+    if (!new_email) {
+        free(new_name);
+        return RELEASY_ERROR;
+    }
+    
+    free(ctx->user_name);
+    free(ctx->user_email);
+    ctx->user_name = new_name;
+    ctx->user_email = new_email;
+    
+    if (ctx->signature) {
+        git_signature_free(ctx->signature);
+        ctx->signature = NULL;
+    }
+    
+    return RELEASY_SUCCESS;
+}
+
+int git_ops_get_user_from_git(git_context_t *ctx) {
+    if (!ctx || !ctx->repo) return RELEASY_ERROR;
+    
+    git_config *cfg;
+    int error = git_repository_config(&cfg, ctx->repo);
+    if (error) return GIT_ERR_NO_USER_CONFIG;
+    
+    const char *name = NULL;
+    error = git_config_get_string(&name, cfg, "user.name");
+    if (error) {
+        git_config_free(cfg);
+        return GIT_ERR_NO_USER_CONFIG;
+    }
+    
+    const char *email = NULL;
+    error = git_config_get_string(&email, cfg, "user.email");
+    if (error) {
+        git_config_free(cfg);
+        return GIT_ERR_NO_USER_CONFIG;
+    }
+    
+    error = git_ops_set_user(ctx, name, email);
+    git_config_free(cfg);
+    return error;
+}
+
+int git_ops_get_user_from_env(git_context_t *ctx) {
+    if (!ctx) return RELEASY_ERROR;
+    
     const char *name = getenv("GIT_AUTHOR_NAME");
     const char *email = getenv("GIT_AUTHOR_EMAIL");
     
-    if (!name) name = "Fayssal Chokri";
-    if (!email) email = "184462342+chokrifaysal@users.noreply.github.com";
+    if (!name || !email) {
+        name = getenv("GIT_COMMITTER_NAME");
+        email = getenv("GIT_COMMITTER_EMAIL");
+    }
     
-    int error = git_signature_now(&ctx->signature, name, email);
-    return error ? GIT_ERR_SIGN_FAILED : RELEASY_SUCCESS;
+    if (!name || !email) return GIT_ERR_NO_USER_CONFIG;
+    
+    return git_ops_set_user(ctx, name, email);
+}
+
+int git_ops_ensure_user_config(git_context_t *ctx) {
+    if (!ctx) return RELEASY_ERROR;
+    
+    // If we already have user info, we're good
+    if (ctx->user_name && ctx->user_email) return RELEASY_SUCCESS;
+    
+    // Try git config first
+    int error = git_ops_get_user_from_git(ctx);
+    if (error == RELEASY_SUCCESS) return RELEASY_SUCCESS;
+    
+    // Try environment variables
+    error = git_ops_get_user_from_env(ctx);
+    if (error == RELEASY_SUCCESS) return RELEASY_SUCCESS;
+    
+    return GIT_ERR_NO_USER_CONFIG;
 }
 
 int git_ops_init(git_context_t *ctx) {
@@ -254,6 +335,8 @@ const char *git_ops_error_string(int error_code) {
             return "Repository has uncommitted changes";
         case GIT_ERR_ROLLBACK_FAILED:
             return "Failed to rollback to tag";
+        case GIT_ERR_NO_USER_CONFIG:
+            return "No git user configuration found";
         default:
             return git_error_last() ? git_error_last()->message : "Unknown error";
     }
@@ -266,6 +349,8 @@ void git_ops_cleanup(git_context_t *ctx) {
     if (ctx->repo) git_repository_free(ctx->repo);
     free(ctx->current_branch);
     free(ctx->latest_tag);
+    free(ctx->user_name);
+    free(ctx->user_email);
     
     memset(ctx, 0, sizeof(git_context_t));
     git_libgit2_shutdown();
