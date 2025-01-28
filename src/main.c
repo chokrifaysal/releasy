@@ -8,6 +8,7 @@
 #include "git_ops.h"
 #include "deploy.h"
 #include "ui.h"
+#include "semver.h"
 
 releasy_config_t g_config = {0};
 
@@ -148,6 +149,132 @@ void releasy_cleanup(void) {
     free(g_config.user_email);
 }
 
+static int handle_deploy_command(int argc, char **argv) {
+    if (optind >= argc) {
+        fprintf(stderr, "Error: Version argument is required for deploy command\n");
+        return RELEASY_ERROR;
+    }
+
+    const char *version = argv[optind];
+    semver_t parsed_version;
+    if (semver_parse(version, &parsed_version) != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Invalid version format: %s\n", version);
+        return RELEASY_ERROR;
+    }
+
+    if (!g_config.target_env) {
+        fprintf(stderr, "Error: Target environment is required (use --env option)\n");
+        return RELEASY_ERROR;
+    }
+
+    if (!g_config.config_path) {
+        g_config.config_path = strdup("config/releasy.json");
+        if (!g_config.config_path) {
+            fprintf(stderr, "Error: Memory allocation failed\n");
+            return RELEASY_ERROR;
+        }
+    }
+
+    deploy_context_t ctx;
+    int ret = deploy_init(&ctx);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to initialize deployment context\n");
+        return ret;
+    }
+
+    ctx.is_dry_run = g_config.dry_run;
+
+    ret = deploy_load_config(&ctx, g_config.config_path);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: %s\n", deploy_error_string(ret));
+        deploy_cleanup(&ctx);
+        return ret;
+    }
+
+    ret = deploy_set_target(&ctx, g_config.target_env);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: %s: %s\n", deploy_error_string(ret), g_config.target_env);
+        deploy_cleanup(&ctx);
+        return ret;
+    }
+
+    printf("Deploying version %s to %s environment...\n", version, g_config.target_env);
+    if (g_config.dry_run) {
+        printf("[DRY RUN] No changes will be made\n");
+    }
+
+    ret = deploy_execute(&ctx, version);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: %s\n", deploy_error_string(ret));
+        deploy_cleanup(&ctx);
+        return ret;
+    }
+
+    deploy_status_t status;
+    deploy_get_status(&ctx, &status);
+    printf("Deployment status: %s\n", deploy_status_string(status));
+
+    deploy_cleanup(&ctx);
+    return RELEASY_SUCCESS;
+}
+
+static int handle_rollback_command(void) {
+    if (!g_config.target_env) {
+        fprintf(stderr, "Error: Target environment is required (use --env option)\n");
+        return RELEASY_ERROR;
+    }
+
+    if (!g_config.config_path) {
+        g_config.config_path = strdup("config/releasy.json");
+        if (!g_config.config_path) {
+            fprintf(stderr, "Error: Memory allocation failed\n");
+            return RELEASY_ERROR;
+        }
+    }
+
+    deploy_context_t ctx;
+    int ret = deploy_init(&ctx);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to initialize deployment context\n");
+        return ret;
+    }
+
+    ctx.is_dry_run = g_config.dry_run;
+
+    ret = deploy_load_config(&ctx, g_config.config_path);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: %s\n", deploy_error_string(ret));
+        deploy_cleanup(&ctx);
+        return ret;
+    }
+
+    ret = deploy_set_target(&ctx, g_config.target_env);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: %s: %s\n", deploy_error_string(ret), g_config.target_env);
+        deploy_cleanup(&ctx);
+        return ret;
+    }
+
+    printf("Rolling back deployment in %s environment...\n", g_config.target_env);
+    if (g_config.dry_run) {
+        printf("[DRY RUN] No changes will be made\n");
+    }
+
+    ret = deploy_rollback(&ctx);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: %s\n", deploy_error_string(ret));
+        deploy_cleanup(&ctx);
+        return ret;
+    }
+
+    deploy_status_t status;
+    deploy_get_status(&ctx, &status);
+    printf("Rollback status: %s\n", deploy_status_string(status));
+
+    deploy_cleanup(&ctx);
+    return RELEASY_SUCCESS;
+}
+
 int main(int argc, char **argv) {
     int ret = releasy_parse_args(argc, argv);
     if (ret != RELEASY_SUCCESS) {
@@ -166,6 +293,32 @@ int main(int argc, char **argv) {
         return ret;
     }
 
+    const char *command = argv[optind];
+    if (!command) {
+        print_usage();
+        return 1;
+    }
+
+    optind++;  // Move past the command
+
+    if (strcmp(command, "deploy") == 0) {
+        ret = handle_deploy_command(argc, argv);
+    } else if (strcmp(command, "rollback") == 0) {
+        ret = handle_rollback_command();
+    } else if (strcmp(command, "init") == 0) {
+        // TODO: Implement init command
+        printf("Init command not implemented yet\n");
+        ret = RELEASY_ERROR;
+    } else if (strcmp(command, "release") == 0) {
+        // TODO: Implement release command
+        printf("Release command not implemented yet\n");
+        ret = RELEASY_ERROR;
+    } else {
+        fprintf(stderr, "Error: Unknown command: %s\n", command);
+        print_usage();
+        ret = RELEASY_ERROR;
+    }
+
     atexit(releasy_cleanup);
-    return RELEASY_SUCCESS;
+    return ret;
 } 
