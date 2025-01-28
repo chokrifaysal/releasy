@@ -33,4 +33,9 @@ target_link_libraries(releasy
 
 install(TARGETS releasy
     RUNTIME DESTINATION bin
-) 
+)
+
+enable_testing()
+add_executable(test_semver tests/test_semver.c src/semver.c)
+target_include_directories(test_semver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME test_semver COMMAND test_semver) 
