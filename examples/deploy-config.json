@@ -1,0 +1,143 @@
+{
+    "log_file": "/var/log/releasy/deploy.log",
+    "status_dir": "/var/lib/releasy/status",
+    "dry_run": false,
+    "verbose": true,
+    "targets": [
+        {
+            "name": "staging",
+            "description": "Staging environment deployment",
+            "script_path": "/opt/releasy/deploy/staging.sh",
+            "working_dir": "/opt/releasy/staging",
+            "timeout": 300,
+            "verify_ssl": true,
+            "status_file": "/var/lib/releasy/status/staging.json",
+            "env": [
+                "DEPLOY_ENV=staging",
+                "APP_PORT=8080",
+                "LOG_LEVEL=debug"
+            ],
+            "hooks": {
+                "pre": [
+                    {
+                        "id": "backup",
+                        "name": "Backup current version",
+                        "description": "Create backup of the current deployment",
+                        "script": "/opt/releasy/hooks/backup.sh",
+                        "timeout": 60,
+                        "retry_count": 3,
+                        "retry_delay": 5,
+                        "env": [
+                            "BACKUP_DIR=/var/backups/releasy"
+                        ]
+                    },
+                    {
+                        "id": "notify-start",
+                        "name": "Notify deployment start",
+                        "description": "Send notification about deployment start",
+                        "script": "/opt/releasy/hooks/notify.sh start",
+                        "timeout": 30,
+                        "retry_count": 2,
+                        "retry_delay": 5
+                    }
+                ],
+                "post": [
+                    {
+                        "id": "health-check",
+                        "name": "Health check",
+                        "description": "Verify deployment health",
+                        "script": "/opt/releasy/hooks/health-check.sh",
+                        "timeout": 120,
+                        "retry_count": 5,
+                        "retry_delay": 10,
+                        "env": [
+                            "HEALTH_CHECK_URL=http://staging.example.com/health",
+                            "EXPECTED_STATUS=200"
+                        ]
+                    },
+                    {
+                        "id": "notify-complete",
+                        "name": "Notify deployment complete",
+                        "description": "Send notification about deployment completion",
+                        "script": "/opt/releasy/hooks/notify.sh complete",
+                        "timeout": 30,
+                        "retry_count": 2,
+                        "retry_delay": 5
+                    }
+                ]
+            }
+        },
+        {
+            "name": "production",
+            "description": "Production environment deployment",
+            "script_path": "/opt/releasy/deploy/production.sh",
+            "working_dir": "/opt/releasy/production",
+            "timeout": 600,
+            "verify_ssl": true,
+            "status_file": "/var/lib/releasy/status/production.json",
+            "env": [
+                "DEPLOY_ENV=production",
+                "APP_PORT=80",
+                "LOG_LEVEL=info"
+            ],
+            "hooks": {
+                "pre": [
+                    {
+                        "id": "backup",
+                        "name": "Backup current version",
+                        "description": "Create backup of the current deployment",
+                        "script": "/opt/releasy/hooks/backup.sh",
+                        "timeout": 120,
+                        "retry_count": 3,
+                        "retry_delay": 10,
+                        "env": [
+                            "BACKUP_DIR=/var/backups/releasy"
+                        ]
+                    },
+                    {
+                        "id": "maintenance-mode",
+                        "name": "Enable maintenance mode",
+                        "description": "Enable maintenance mode before deployment",
+                        "script": "/opt/releasy/hooks/maintenance.sh enable",
+                        "timeout": 60,
+                        "retry_count": 2,
+                        "retry_delay": 5
+                    }
+                ],
+                "post": [
+                    {
+                        "id": "smoke-test",
+                        "name": "Smoke tests",
+                        "description": "Run smoke tests after deployment",
+                        "script": "/opt/releasy/hooks/smoke-test.sh",
+                        "timeout": 300,
+                        "retry_count": 2,
+                        "retry_delay": 30,
+                        "env": [
+                            "TEST_ENV=production",
+                            "TEST_TIMEOUT=240"
+                        ]
+                    },
+                    {
+                        "id": "maintenance-mode",
+                        "name": "Disable maintenance mode",
+                        "description": "Disable maintenance mode after deployment",
+                        "script": "/opt/releasy/hooks/maintenance.sh disable",
+                        "timeout": 60,
+                        "retry_count": 2,
+                        "retry_delay": 5
+                    },
+                    {
+                        "id": "notify-complete",
+                        "name": "Notify deployment complete",
+                        "description": "Send notification about deployment completion",
+                        "script": "/opt/releasy/hooks/notify.sh complete",
+                        "timeout": 30,
+                        "retry_count": 2,
+                        "retry_delay": 5
+                    }
+                ]
+            }
+        }
+    ]
+} 
