@@ -14,6 +14,7 @@
 #define CHANGELOG_ERR_MEMORY -306
 #define CHANGELOG_ERR_TAG_NOT_FOUND -307
 #define CHANGELOG_ERR_INVALID_RANGE -308
+#define CHANGELOG_ERR_BACKUP_FAILED -309
 
 // Commit types for conventional commits
 typedef enum {
@@ -52,12 +53,13 @@ typedef struct {
 } changelog_entry_t;
 
 typedef struct {
+    char *file_path;
     changelog_entry_t **entries;
     size_t count;
-    char *file_path;
     int include_metadata;
     int group_by_type;
     int include_authors;
+    int backup;  // Flag to enable/disable changelog backup
 } changelog_t;
 
 // Function declarations

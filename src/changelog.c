@@ -148,8 +148,69 @@ static int write_commit_group(FILE *f, commit_type_t type, commit_info_t **commi
     return RELEASY_SUCCESS;
 }
 
+#define CHANGELOG_BACKUP_SUFFIX ".bak"
+
+static int create_backup_file(const char *original_path) {
+    if (!original_path) return CHANGELOG_ERR_FILE_ACCESS;
+    
+    // Generate backup filename with timestamp
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm);
+    
+    size_t backup_path_len = strlen(original_path) + strlen(CHANGELOG_BACKUP_SUFFIX) + strlen(timestamp) + 2;
+    char *backup_path = malloc(backup_path_len);
+    if (!backup_path) return CHANGELOG_ERR_MEMORY;
+    
+    snprintf(backup_path, backup_path_len, "%s.%s%s", 
+             original_path, timestamp, CHANGELOG_BACKUP_SUFFIX);
+    
+    // Open original file
+    FILE *src = fopen(original_path, "r");
+    if (!src) {
+        free(backup_path);
+        return CHANGELOG_ERR_FILE_ACCESS;
+    }
+    
+    // Create backup file
+    FILE *dst = fopen(backup_path, "w");
+    if (!dst) {
+        fclose(src);
+        free(backup_path);
+        return CHANGELOG_ERR_FILE_ACCESS;
+    }
+    
+    // Copy contents
+    char buffer[4096];
+    size_t bytes;
+    while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+        if (fwrite(buffer, 1, bytes, dst) != bytes) {
+            fclose(src);
+            fclose(dst);
+            free(backup_path);
+            return CHANGELOG_ERR_FILE_ACCESS;
+        }
+    }
+    
+    fclose(src);
+    fclose(dst);
+    free(backup_path);
+    return RELEASY_SUCCESS;
+}
+
 int changelog_write(changelog_t *log) {
     if (!log || !log->entries || !log->count) return CHANGELOG_ERR_NO_COMMITS;
+    
+    // Create backup if enabled and file exists
+    if (log->backup) {
+        FILE *test = fopen(log->file_path, "r");
+        if (test) {
+            fclose(test);
+            int ret = create_backup_file(log->file_path);
+            if (ret != RELEASY_SUCCESS) return ret;
+        }
+    }
     
     FILE *f = fopen(log->file_path, "w");
     if (!f) return CHANGELOG_ERR_FILE_ACCESS;
@@ -414,6 +475,8 @@ void changelog_cleanup(changelog_t *log) {
     memset(log, 0, sizeof(changelog_t));
 }
 
+#define CHANGELOG_ERR_BACKUP_FAILED -309
+
 const char *changelog_error_string(int error_code) {
     switch (error_code) {
         case RELEASY_SUCCESS:
@@ -436,6 +499,8 @@ const char *changelog_error_string(int error_code) {
             return "Version tag not found";
         case CHANGELOG_ERR_INVALID_RANGE:
             return "Invalid commit range";
+        case CHANGELOG_ERR_BACKUP_FAILED:
+            return "Failed to create changelog backup";
         default:
             return "Unknown error";
     }
