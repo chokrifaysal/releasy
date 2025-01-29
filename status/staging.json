@@ -1,0 +1,14 @@
+{
+    "current_version": "0.1.0",
+    "previous_version": null,
+    "last_deployment": "2024-03-20T12:00:00Z",
+    "status": "success",
+    "history": [
+        {
+            "version": "0.1.0",
+            "timestamp": "2024-03-20T12:00:00Z",
+            "status": "success",
+            "user": "Test User <test@example.com>"
+        }
+    ]
+} 
