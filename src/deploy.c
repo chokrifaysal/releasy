@@ -359,7 +359,12 @@ static int deploy_execute_script(deploy_context_t *ctx, const char *script, char
             if (env[i]) {
                 char *env_copy = strdup(env[i]);
                 if (env_copy) {
-                    putenv(env_copy);  // Let the system clean this up
+                    char *equals = strchr(env_copy, '=');
+                    if (equals) {
+                        *equals = '\0';  // Split into name and value
+                        setenv(env_copy, equals + 1, 1);
+                        free(env_copy);
+                    }
                 }
             }
         }

@@ -37,7 +37,7 @@ typedef struct {
     int retry_delay;
 } deploy_hook_t;
 
-typedef struct {
+typedef struct deploy_target {
     char *name;
     char *description;
     char *script_path;
@@ -51,6 +51,7 @@ typedef struct {
     deploy_hook_t *post_hooks;
     int pre_hook_count;
     int post_hook_count;
+    struct deploy_target *next;
 } deploy_target_t;
 
 typedef struct {
