@@ -379,6 +379,8 @@ const char *git_ops_error_string(int error_code) {
             return "Failed to rollback to tag";
         case GIT_ERR_NO_USER_CONFIG:
             return "No git user configuration found";
+        case GIT_ERR_INVALID_VERSION:
+            return "Invalid version format";
         default:
             return git_error_last() ? git_error_last()->message : "Unknown error";
     }
@@ -396,4 +398,121 @@ void git_ops_cleanup(git_context_t *ctx) {
     
     memset(ctx, 0, sizeof(git_context_t));
     git_libgit2_shutdown();
+}
+
+static int validate_version_format(const char *version) {
+    if (!version) return RELEASY_ERROR;
+
+    semver_t ver;
+    semver_init(&ver);
+    int ret = semver_parse(version, &ver);
+    semver_free(&ver);
+    return ret == 0 ? RELEASY_SUCCESS : GIT_ERR_INVALID_VERSION;
+}
+
+static int normalize_version(const char *version, char *normalized, size_t size) {
+    if (!version || !normalized || size == 0) return RELEASY_ERROR;
+
+    // Skip 'v' prefix if present
+    const char *ver = version;
+    if (ver[0] == 'v') ver++;
+
+    // Validate version format
+    int ret = validate_version_format(ver);
+    if (ret != RELEASY_SUCCESS) return ret;
+
+    strncpy(normalized, ver, size - 1);
+    normalized[size - 1] = '\0';
+    return RELEASY_SUCCESS;
+}
+
+int git_ops_compare_versions(const char *version1, const char *version2) {
+    if (!version1 || !version2) return 0;
+
+    char norm1[32], norm2[32];
+    if (normalize_version(version1, norm1, sizeof(norm1)) != RELEASY_SUCCESS ||
+        normalize_version(version2, norm2, sizeof(norm2)) != RELEASY_SUCCESS) {
+        return 0;
+    }
+
+    semver_t v1, v2;
+    semver_init(&v1);
+    semver_init(&v2);
+
+    if (semver_parse(norm1, &v1) != 0 || semver_parse(norm2, &v2) != 0) {
+        semver_free(&v1);
+        semver_free(&v2);
+        return 0;
+    }
+
+    int result = semver_compare(&v1, &v2);
+    semver_free(&v1);
+    semver_free(&v2);
+    return result;
+}
+
+int git_ops_is_version_tag(git_context_t *ctx, const char *tag_name) {
+    if (!ctx || !tag_name) return 0;
+
+    // Skip 'v' prefix if present
+    const char *version = tag_name;
+    if (version[0] == 'v') version++;
+
+    return validate_version_format(version) == RELEASY_SUCCESS;
+}
+
+int git_ops_get_version_history(git_context_t *ctx, char ***versions, size_t *count) {
+    if (!ctx || !versions || !count) return RELEASY_ERROR;
+
+    *versions = NULL;
+    *count = 0;
+
+    git_strarray tags;
+    int ret = git_tag_list(&tags, ctx->repo);
+    if (ret != 0) return GIT_ERR_NO_TAGS;
+
+    // Count version tags
+    size_t version_count = 0;
+    for (size_t i = 0; i < tags.count; i++) {
+        if (git_ops_is_version_tag(ctx, tags.strings[i])) {
+            version_count++;
+        }
+    }
+
+    if (version_count == 0) {
+        git_strarray_free(&tags);
+        return GIT_ERR_NO_TAGS;
+    }
+
+    // Allocate memory for version array
+    *versions = calloc(version_count, sizeof(char *));
+    if (!*versions) {
+        git_strarray_free(&tags);
+        return RELEASY_ERROR;
+    }
+
+    // Copy version tags
+    size_t j = 0;
+    for (size_t i = 0; i < tags.count; i++) {
+        if (git_ops_is_version_tag(ctx, tags.strings[i])) {
+            (*versions)[j] = strdup(tags.strings[i]);
+            if (!(*versions)[j]) {
+                for (size_t k = 0; k < j; k++) {
+                    free((*versions)[k]);
+                }
+                free(*versions);
+                *versions = NULL;
+                git_strarray_free(&tags);
+                return RELEASY_ERROR;
+            }
+            j++;
+        }
+    }
+
+    *count = version_count;
+    git_strarray_free(&tags);
+
+    // Sort versions
+    qsort(*versions, *count, sizeof(char *), tag_sorting_callback);
+    return RELEASY_SUCCESS;
 } 

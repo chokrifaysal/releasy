@@ -14,6 +14,7 @@
 #define GIT_ERR_DIRTY_REPO -206
 #define GIT_ERR_ROLLBACK_FAILED -207
 #define GIT_ERR_NO_USER_CONFIG -208
+#define GIT_ERR_INVALID_VERSION -209
 
 typedef struct {
     git_repository *repo;
@@ -30,9 +31,9 @@ int git_ops_open_repo(git_context_t *ctx, const char *path);
 int git_ops_check_dirty(git_context_t *ctx);
 int git_ops_get_latest_tag(git_context_t *ctx, char **tag);
 int git_ops_list_tags(git_context_t *ctx, char ***tags, size_t *count);
-int git_ops_create_tag(git_context_t *ctx, const char *tag_name, const char *message, int sign);
+int git_ops_create_tag(git_context_t *ctx, const char *version, const char *user_name, const char *user_email);
 int git_ops_verify_tag(git_context_t *ctx, const char *tag_name);
-int git_ops_rollback(git_context_t *ctx, const char *tag);
+int git_ops_rollback(git_context_t *ctx, const char *version);
 
 // New functions for user identification
 int git_ops_set_user(git_context_t *ctx, const char *name, const char *email);
@@ -40,11 +41,13 @@ int git_ops_get_user_from_git(git_context_t *ctx);
 int git_ops_get_user_from_env(git_context_t *ctx);
 int git_ops_ensure_user_config(git_context_t *ctx);
 
+// Version management functions
+int git_ops_compare_versions(const char *version1, const char *version2);
+int git_ops_is_version_tag(git_context_t *ctx, const char *tag_name);
+int git_ops_get_version_history(git_context_t *ctx, char ***versions, size_t *count);
+int git_ops_get_latest_version(git_context_t *ctx, char *version, size_t size);
+
 const char *git_ops_error_string(int error_code);
 void git_ops_cleanup(git_context_t *ctx);
-
-int git_ops_get_latest_version(git_context_t *ctx, char *version, size_t size);
-int git_ops_create_tag(git_context_t *ctx, const char *version, const char *user_name, const char *user_email);
-int git_ops_rollback(git_context_t *ctx, const char *version);
 
 #endif 
