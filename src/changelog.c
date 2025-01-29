@@ -167,13 +167,173 @@ int changelog_write(changelog_t *log) {
     return RELEASY_SUCCESS;
 }
 
+static int get_commit_range(git_repository *repo, const char *from_tag, const char *to_tag,
+                          git_revwalk **walker) {
+    int error;
+    git_oid from_oid, to_oid;
+
+    // Get the "to" commit (newer)
+    if (to_tag) {
+        error = git_revparse_single((git_object **)&to_oid, repo, to_tag);
+        if (error) return error;
+    } else {
+        error = git_reference_name_to_id(&to_oid, repo, "HEAD");
+        if (error) return error;
+    }
+
+    // Initialize the revision walker
+    error = git_revwalk_new(walker, repo);
+    if (error) return error;
+
+    git_revwalk_sorting(*walker, GIT_SORT_TIME);
+    error = git_revwalk_push(*walker, &to_oid);
+    if (error) {
+        git_revwalk_free(*walker);
+        return error;
+    }
+
+    // If we have a from tag, stop at that commit
+    if (from_tag) {
+        error = git_revparse_single((git_object **)&from_oid, repo, from_tag);
+        if (error) {
+            git_revwalk_free(*walker);
+            return error;
+        }
+        error = git_revwalk_hide(*walker, &from_oid);
+        if (error) {
+            git_revwalk_free(*walker);
+            return error;
+        }
+    }
+
+    return RELEASY_SUCCESS;
+}
+
+static int extract_commit_metadata(git_commit *commit, commit_info_t *info) {
+    if (!commit || !info) return RELEASY_ERROR;
+
+    // Get commit hash
+    const git_oid *oid = git_commit_id(commit);
+    char hash[GIT_OID_HEXSZ + 1] = {0};
+    git_oid_fmt(hash, oid);
+    info->commit_hash = strdup(hash);
+
+    // Get author information
+    const git_signature *author = git_commit_author(commit);
+    if (author) {
+        size_t author_len = strlen(author->name) + strlen(author->email) + 4;
+        info->author = malloc(author_len);
+        if (info->author) {
+            snprintf(info->author, author_len, "%s <%s>", author->name, author->email);
+        }
+
+        // Format date
+        struct tm *tm = localtime(&author->when.time);
+        char date[32];
+        strftime(date, sizeof(date), "%Y-%m-%d", tm);
+        info->date = strdup(date);
+    }
+
+    return RELEASY_SUCCESS;
+}
+
 int changelog_generate(changelog_t *log, git_repository *repo, const char *version) {
     if (!log || !repo || !version) return RELEASY_ERROR;
-    
-    // TODO: Implement git commit history traversal and changelog generation
-    // This will require walking the git commit history between tags
-    // and parsing conventional commits
-    
+
+    // Create new changelog entry
+    changelog_entry_t *entry = calloc(1, sizeof(changelog_entry_t));
+    if (!entry) return RELEASY_ERROR;
+
+    entry->version = strdup(version);
+    if (!entry->version) {
+        free(entry);
+        return RELEASY_ERROR;
+    }
+
+    // Get current date
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char date[32];
+    strftime(date, sizeof(date), "%Y-%m-%d", tm);
+    entry->date = strdup(date);
+
+    // Find previous version tag
+    git_strarray tags = {0};
+    int error = git_tag_list(&tags, repo);
+    if (error == 0 && tags.count > 0) {
+        // Sort tags by version
+        qsort(tags.strings, tags.count, sizeof(char *), tag_sorting_callback);
+        for (size_t i = 0; i < tags.count; i++) {
+            if (git_ops_is_version_tag(NULL, tags.strings[i])) {
+                entry->previous_version = strdup(tags.strings[i]);
+                break;
+            }
+        }
+    }
+    git_strarray_free(&tags);
+
+    // Initialize revision walker
+    git_revwalk *walker = NULL;
+    error = get_commit_range(repo, entry->previous_version, NULL, &walker);
+    if (error) {
+        changelog_free_entry(entry);
+        return error;
+    }
+
+    // Walk through commits
+    git_oid oid;
+    size_t max_commits = 1000;  // Reasonable limit
+    size_t commit_count = 0;
+    commit_info_t **commits = NULL;
+
+    while (git_revwalk_next(&oid, walker) == 0 && commit_count < max_commits) {
+        git_commit *commit = NULL;
+        error = git_commit_lookup(&commit, repo, &oid);
+        if (error) continue;
+
+        const char *message = git_commit_message(commit);
+        if (message) {
+            commit_info_t *info = calloc(1, sizeof(commit_info_t));
+            if (info) {
+                if (changelog_parse_commit(message, info) == RELEASY_SUCCESS) {
+                    extract_commit_metadata(commit, info);
+
+                    // Add to commits array
+                    commit_info_t **new_commits = realloc(commits, 
+                        (commit_count + 1) * sizeof(commit_info_t *));
+                    if (new_commits) {
+                        commits = new_commits;
+                        commits[commit_count++] = info;
+                    } else {
+                        changelog_free_commit(info);
+                        free(info);
+                    }
+                } else {
+                    changelog_free_commit(info);
+                    free(info);
+                }
+            }
+        }
+        git_commit_free(commit);
+    }
+
+    git_revwalk_free(walker);
+
+    // Update entry with commits
+    entry->commits = commits;
+    entry->count = commit_count;
+
+    // Add entry to changelog
+    changelog_entry_t **new_entries = realloc(log->entries,
+        (log->count + 1) * sizeof(changelog_entry_t *));
+    if (!new_entries) {
+        changelog_free_entry(entry);
+        return RELEASY_ERROR;
+    }
+
+    log->entries = new_entries;
+    log->entries[log->count++] = entry;
+
     return RELEASY_SUCCESS;
 }
 
@@ -238,6 +398,16 @@ const char *changelog_error_string(int error_code) {
             return "Failed to access changelog file";
         case CHANGELOG_ERR_PARSE_FAILED:
             return "Failed to parse commit message";
+        case CHANGELOG_ERR_GIT_WALK_FAILED:
+            return "Failed to walk git commit history";
+        case CHANGELOG_ERR_GIT_LOOKUP_FAILED:
+            return "Failed to lookup git commit";
+        case CHANGELOG_ERR_MEMORY:
+            return "Memory allocation failed";
+        case CHANGELOG_ERR_TAG_NOT_FOUND:
+            return "Version tag not found";
+        case CHANGELOG_ERR_INVALID_RANGE:
+            return "Invalid commit range";
         default:
             return "Unknown error";
     }
