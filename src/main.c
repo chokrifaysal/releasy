@@ -307,6 +307,112 @@ static int handle_init_command(const char *config_path, const char *user_name, c
     return init_project(config_path ? config_path : "config/releasy.json", user_name, user_email);
 }
 
+static int handle_release_command(void) {
+    git_context_t ctx;
+    int ret = git_ops_init(&ctx);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to initialize git context\n");
+        return ret;
+    }
+
+    // Check if working directory is clean
+    ret = git_ops_check_dirty(&ctx);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Working directory is not clean. Please commit or stash your changes.\n");
+        git_ops_cleanup(&ctx);
+        return ret;
+    }
+
+    // Get current version from latest tag
+    char current_version[32] = "0.0.0";
+    ret = git_ops_get_latest_version(&ctx, current_version, sizeof(current_version));
+    if (ret != RELEASY_SUCCESS && ret != GIT_ERR_NO_TAGS) {
+        fprintf(stderr, "Error: Failed to get current version\n");
+        git_ops_cleanup(&ctx);
+        return ret;
+    }
+
+    // Parse current version
+    semver_t current;
+    if (semver_parse(current_version, &current) != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Invalid current version format: %s\n", current_version);
+        git_ops_cleanup(&ctx);
+        return RELEASY_ERROR;
+    }
+
+    // If in interactive mode, prompt for version bump type
+    char new_version[32];
+    if (g_config.interactive) {
+        printf("Current version: %s\n", current_version);
+        printf("Select version bump type:\n");
+        printf("1. Major (breaking changes)\n");
+        printf("2. Minor (new features)\n");
+        printf("3. Patch (bug fixes)\n");
+        printf("4. Custom version\n");
+        printf("Choice (1-4): ");
+
+        char choice[8];
+        if (fgets(choice, sizeof(choice), stdin)) {
+            choice[strcspn(choice, "\n")] = 0;
+            switch (choice[0]) {
+                case '1':
+                    current.major++;
+                    current.minor = 0;
+                    current.patch = 0;
+                    break;
+                case '2':
+                    current.minor++;
+                    current.patch = 0;
+                    break;
+                case '3':
+                    current.patch++;
+                    break;
+                case '4':
+                    printf("Enter new version: ");
+                    if (fgets(new_version, sizeof(new_version), stdin)) {
+                        new_version[strcspn(new_version, "\n")] = 0;
+                        if (semver_parse(new_version, &current) != RELEASY_SUCCESS) {
+                            fprintf(stderr, "Error: Invalid version format\n");
+                            git_ops_cleanup(&ctx);
+                            return RELEASY_ERROR;
+                        }
+                    }
+                    break;
+                default:
+                    fprintf(stderr, "Error: Invalid choice\n");
+                    git_ops_cleanup(&ctx);
+                    return RELEASY_ERROR;
+            }
+        }
+    } else {
+        // Default to patch version bump
+        current.patch++;
+    }
+
+    // Format new version string
+    snprintf(new_version, sizeof(new_version), "%d.%d.%d",
+             current.major, current.minor, current.patch);
+
+    printf("Creating new release: %s\n", new_version);
+    if (g_config.dry_run) {
+        printf("[DRY RUN] No changes will be made\n");
+        git_ops_cleanup(&ctx);
+        return RELEASY_SUCCESS;
+    }
+
+    // Create release tag
+    ret = git_ops_create_tag(&ctx, new_version, g_config.user_name, g_config.user_email);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to create release tag\n");
+        git_ops_cleanup(&ctx);
+        return ret;
+    }
+
+    printf("Successfully created release %s\n", new_version);
+    git_ops_cleanup(&ctx);
+    return RELEASY_SUCCESS;
+}
+
 int main(int argc, char **argv) {
     int ret = releasy_parse_args(argc, argv);
     if (ret != RELEASY_SUCCESS) {
@@ -340,9 +446,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(command, "init") == 0) {
         ret = handle_init_command(g_config.config_path, g_config.user_name, g_config.user_email);
     } else if (strcmp(command, "release") == 0) {
-        // TODO: Implement release command
-        printf("Release command not implemented yet\n");
-        ret = RELEASY_ERROR;
+        ret = handle_release_command();
     } else {
         fprintf(stderr, "Error: Unknown command: %s\n", command);
         print_usage();

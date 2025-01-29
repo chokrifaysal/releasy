@@ -43,4 +43,8 @@ int git_ops_ensure_user_config(git_context_t *ctx);
 const char *git_ops_error_string(int error_code);
 void git_ops_cleanup(git_context_t *ctx);
 
+int git_ops_get_latest_version(git_context_t *ctx, char *version, size_t size);
+int git_ops_create_tag(git_context_t *ctx, const char *version, const char *user_name, const char *user_email);
+int git_ops_rollback(git_context_t *ctx, const char *version);
+
 #endif 

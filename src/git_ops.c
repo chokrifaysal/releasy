@@ -3,6 +3,7 @@
 #include <string.h>
 #include "git_ops.h"
 #include "releasy.h"
+#include "semver.h"
 
 static int git_ops_get_signature(git_context_t *ctx) {
     if (ctx->signature) return RELEASY_SUCCESS;
@@ -151,18 +152,21 @@ static int tag_sorting_callback(const void *a, const void *b) {
     const char *tag_a = *(const char **)a;
     const char *tag_b = *(const char **)b;
     
+    // Skip 'v' prefix if present
+    if (tag_a[0] == 'v') tag_a++;
+    if (tag_b[0] == 'v') tag_b++;
+    
     semver_t ver_a, ver_b;
     semver_init(&ver_a);
     semver_init(&ver_b);
     
-    if (semver_parse(tag_a, &ver_a) != RELEASY_SUCCESS ||
-        semver_parse(tag_b, &ver_b) != RELEASY_SUCCESS) {
+    if (semver_parse(tag_a, &ver_a) != 0 || semver_parse(tag_b, &ver_b) != 0) {
         semver_free(&ver_a);
         semver_free(&ver_b);
-        return strcmp(tag_b, tag_a);
+        return 0;
     }
     
-    int result = semver_compare(&ver_b, &ver_a);
+    int result = semver_compare(&ver_a, &ver_b);
     semver_free(&ver_a);
     semver_free(&ver_b);
     return result;
@@ -235,55 +239,93 @@ int git_ops_get_latest_tag(git_context_t *ctx, char **tag) {
     return error;
 }
 
-int git_ops_create_tag(git_context_t *ctx, const char *tag_name, const char *message, int sign) {
-    if (!ctx || !ctx->repo || !tag_name) return RELEASY_ERROR;
-    
-    int error = git_ops_check_dirty(ctx);
-    if (error) return error;
-    
-    error = git_ops_get_signature(ctx);
-    if (error) return error;
-    
-    git_oid tag_id;
-    git_object *target = NULL;
-    error = git_revparse_single(&target, ctx->repo, "HEAD");
-    if (error) return error;
-    
-    if (sign) {
-        error = git_tag_create(&tag_id, ctx->repo, tag_name, target,
-                             ctx->signature, message,
-                             1); // force
-    } else {
-        error = git_tag_create_lightweight(&tag_id, ctx->repo,
-                                         tag_name, target,
-                                         1); // force
+int git_ops_get_latest_version(git_context_t *ctx, char *version, size_t size) {
+    if (!ctx || !version || size == 0) return RELEASY_ERROR;
+
+    git_strarray tags = {0};
+    int ret = git_tag_list(&tags, ctx->repo);
+    if (ret != 0) return GIT_ERR_NO_TAGS;
+
+    if (tags.count == 0) {
+        git_strarray_free(&tags);
+        return GIT_ERR_NO_TAGS;
     }
-    
-    git_object_free(target);
-    if (error) return GIT_ERR_TAG_EXISTS;
-    
+
+    // Sort tags by version
+    qsort(tags.strings, tags.count, sizeof(char *), tag_sorting_callback);
+
+    // Get the latest version (last in sorted array)
+    const char *latest = tags.strings[tags.count - 1];
+    if (latest[0] == 'v') latest++; // Skip 'v' prefix if present
+
+    strncpy(version, latest, size - 1);
+    version[size - 1] = '\0';
+
+    git_strarray_free(&tags);
     return RELEASY_SUCCESS;
 }
 
+int git_ops_create_tag(git_context_t *ctx, const char *version, const char *user_name, const char *user_email) {
+    if (!ctx || !version || !user_name || !user_email) return RELEASY_ERROR;
+
+    // Get HEAD commit
+    git_oid head_oid;
+    git_object *head = NULL;
+    char tag_name[64];
+    snprintf(tag_name, sizeof(tag_name), "v%s", version);
+
+    int ret = git_revparse_single(&head, ctx->repo, "HEAD");
+    if (ret != 0) {
+        const git_error *err = git_error_last();
+        fprintf(stderr, "Failed to get HEAD: %s\n", err ? err->message : "unknown error");
+        return RELEASY_ERROR;
+    }
+
+    // Create tag signature
+    git_signature *tagger = NULL;
+    ret = git_signature_now(&tagger, user_name, user_email);
+    if (ret != 0) {
+        git_object_free(head);
+        return RELEASY_ERROR;
+    }
+
+    // Create annotated tag
+    char tag_message[256];
+    snprintf(tag_message, sizeof(tag_message), "Release version %s", version);
+
+    ret = git_tag_create(NULL, ctx->repo, tag_name, head, tagger, tag_message, 0);
+    if (ret != 0) {
+        // Try lightweight tag if annotated tag fails
+        ret = git_tag_create_lightweight(NULL, ctx->repo, tag_name, head, 0);
+    }
+
+    git_object_free(head);
+    git_signature_free(tagger);
+
+    return ret == 0 ? RELEASY_SUCCESS : RELEASY_ERROR;
+}
+
 int git_ops_verify_tag(git_context_t *ctx, const char *tag_name) {
-    if (!ctx || !ctx->repo || !tag_name) return RELEASY_ERROR;
-    
+    if (!ctx || !tag_name) return RELEASY_ERROR;
+
     git_object *obj = NULL;
-    int error = git_revparse_single(&obj, ctx->repo, tag_name);
-    if (error) return GIT_ERR_TAG_NOT_FOUND;
-    
-    if (git_object_type(obj) != GIT_OBJECT_TAG) {
+    int ret = git_revparse_single(&obj, ctx->repo, tag_name);
+    if (ret != 0) return RELEASY_ERROR;
+
+    // Check if it's a tag
+    if (git_object_type(obj) != GIT_OBJ_TAG) {
         git_object_free(obj);
-        return GIT_ERR_INVALID_TAG;
+        return RELEASY_ERROR;
     }
-    
-    git_tag *tag = (git_tag *)obj;
-    const git_signature *sig = git_tag_tagger(tag);
-    if (!sig) {
+
+    // For annotated tags, verify the tagger
+    const git_tag *tag = (const git_tag *)obj;
+    const git_signature *tagger = git_tag_tagger(tag);
+    if (!tagger) {
         git_object_free(obj);
-        return GIT_ERR_INVALID_TAG;
+        return RELEASY_ERROR;
     }
-    
+
     git_object_free(obj);
     return RELEASY_SUCCESS;
 }
