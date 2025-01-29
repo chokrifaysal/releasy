@@ -20,6 +20,11 @@ typedef struct {
     char *user_name;
     char *user_email;
     int interactive;
+    char *changelog_path;
+    int changelog_group_by_type;
+    int changelog_include_metadata;
+    int changelog_include_authors;
+    int changelog_backup;
 } releasy_config_t;
 
 extern releasy_config_t g_config;

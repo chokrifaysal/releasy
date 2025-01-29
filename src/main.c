@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <errno.h>
+#include <ctype.h>
 #include "releasy.h"
 #include "git_ops.h"
 #include "deploy.h"
@@ -12,6 +13,7 @@
 #include "semver.h"
 #include "config.h"
 #include "init.h"
+#include "changelog.h"
 
 releasy_config_t g_config = {0};
 
@@ -24,20 +26,30 @@ static struct option long_options[] = {
     {"user-name", required_argument, 0, 'n'},
     {"user-email", required_argument, 0, 'm'},
     {"interactive", no_argument, 0, 'i'},
+    {"changelog", required_argument, 0, 'l'},
+    {"no-group-changelog", no_argument, 0, 'g'},
+    {"no-metadata", no_argument, 0, 't'},
+    {"no-authors", no_argument, 0, 'a'},
+    {"backup-changelog", no_argument, 0, 'b'},
     {0, 0, 0, 0}
 };
 
 static void print_usage(void) {
     printf("Usage: releasy [OPTIONS] COMMAND\n\n"
            "Options:\n"
-           "  -h, --help         Show this help message\n"
-           "  -v, --version      Show version information\n"
-           "  -d, --dry-run      Simulate actions without making changes\n"
-           "  -c, --config       Specify config file path\n"
-           "  -e, --env          Target environment for deployment\n"
-           "  -n, --user-name    Git user name\n"
-           "  -m, --user-email   Git user email\n"
-           "  -i, --interactive  Enable interactive mode\n\n"
+           "  -h, --help              Show this help message\n"
+           "  -v, --version           Show version information\n"
+           "  -d, --dry-run           Simulate actions without making changes\n"
+           "  -c, --config            Specify config file path\n"
+           "  -e, --env              Target environment for deployment\n"
+           "  -n, --user-name         Git user name\n"
+           "  -m, --user-email        Git user email\n"
+           "  -i, --interactive       Enable interactive mode\n"
+           "  -l, --changelog         Specify changelog file path\n"
+           "  -g, --no-group-changelog Don't group changelog by commit type\n"
+           "  -t, --no-metadata       Don't include metadata in changelog\n"
+           "  -a, --no-authors        Don't include authors in changelog\n"
+           "  -b, --backup-changelog  Create backup of existing changelog\n\n"
            "Commands:\n"
            "  init      Initialize release configuration\n"
            "  release   Create a new release\n"
@@ -49,7 +61,14 @@ int releasy_parse_args(int argc, char **argv) {
     int opt;
     int option_index = 0;
 
-    while ((opt = getopt_long(argc, argv, "hvdc:e:n:m:i",
+    // Set default values
+    g_config.changelog_path = strdup("CHANGELOG.md");
+    g_config.changelog_group_by_type = 1;
+    g_config.changelog_include_metadata = 1;
+    g_config.changelog_include_authors = 1;
+    g_config.changelog_backup = 0;
+
+    while ((opt = getopt_long(argc, argv, "hvdc:e:n:m:il:gtab",
            long_options, &option_index)) != -1) {
         switch (opt) {
             case 'h':
@@ -62,19 +81,39 @@ int releasy_parse_args(int argc, char **argv) {
                 g_config.dry_run = 1;
                 break;
             case 'c':
+                free(g_config.config_path);
                 g_config.config_path = strdup(optarg);
                 break;
             case 'e':
+                free(g_config.target_env);
                 g_config.target_env = strdup(optarg);
                 break;
             case 'n':
+                free(g_config.user_name);
                 g_config.user_name = strdup(optarg);
                 break;
             case 'm':
+                free(g_config.user_email);
                 g_config.user_email = strdup(optarg);
                 break;
             case 'i':
                 g_config.interactive = 1;
+                break;
+            case 'l':
+                free(g_config.changelog_path);
+                g_config.changelog_path = strdup(optarg);
+                break;
+            case 'g':
+                g_config.changelog_group_by_type = 0;
+                break;
+            case 't':
+                g_config.changelog_include_metadata = 0;
+                break;
+            case 'a':
+                g_config.changelog_include_authors = 0;
+                break;
+            case 'b':
+                g_config.changelog_backup = 1;
                 break;
             default:
                 return RELEASY_ERROR;
@@ -150,6 +189,7 @@ void releasy_cleanup(void) {
     free(g_config.target_env);
     free(g_config.user_name);
     free(g_config.user_email);
+    free(g_config.changelog_path);
 }
 
 static int handle_deploy_command(int argc, char **argv) {
@@ -400,15 +440,74 @@ static int handle_release_command(void) {
         return RELEASY_SUCCESS;
     }
 
+    // Generate changelog
+    changelog_t changelog;
+    ret = changelog_init(&changelog, g_config.changelog_path);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to initialize changelog\n");
+        git_ops_cleanup(&ctx);
+        return ret;
+    }
+
+    ret = changelog_generate(&changelog, ctx.repo, new_version);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to generate changelog: %s\n", changelog_error_string(ret));
+        changelog_cleanup(&changelog);
+        git_ops_cleanup(&ctx);
+        return ret;
+    }
+
+    // If in interactive mode, preview changelog
+    if (g_config.interactive) {
+        printf("\nChangelog preview for version %s:\n", new_version);
+        printf("----------------------------------------\n");
+        changelog_entry_t *entry = changelog.entries[changelog.count - 1];
+        if (entry->commits) {
+            for (size_t i = 0; i < entry->count; i++) {
+                commit_info_t *commit = entry->commits[i];
+                printf("* %s: %s", changelog_commit_type_string(commit->type),
+                       commit->description);
+                if (commit->is_breaking) {
+                    printf(" [BREAKING]");
+                }
+                printf("\n");
+            }
+        }
+        printf("----------------------------------------\n");
+        printf("Proceed with release? [y/N]: ");
+
+        char choice[8];
+        if (fgets(choice, sizeof(choice), stdin)) {
+            choice[strcspn(choice, "\n")] = 0;
+            if (tolower(choice[0]) != 'y') {
+                printf("Release cancelled\n");
+                changelog_cleanup(&changelog);
+                git_ops_cleanup(&ctx);
+                return RELEASY_SUCCESS;
+            }
+        }
+    }
+
+    // Write changelog
+    ret = changelog_write(&changelog);
+    if (ret != RELEASY_SUCCESS) {
+        fprintf(stderr, "Error: Failed to write changelog: %s\n", changelog_error_string(ret));
+        changelog_cleanup(&changelog);
+        git_ops_cleanup(&ctx);
+        return ret;
+    }
+
     // Create release tag
     ret = git_ops_create_tag(&ctx, new_version, g_config.user_name, g_config.user_email);
     if (ret != RELEASY_SUCCESS) {
         fprintf(stderr, "Error: Failed to create release tag\n");
+        changelog_cleanup(&changelog);
         git_ops_cleanup(&ctx);
         return ret;
     }
 
     printf("Successfully created release %s\n", new_version);
+    changelog_cleanup(&changelog);
     git_ops_cleanup(&ctx);
     return RELEASY_SUCCESS;
 }

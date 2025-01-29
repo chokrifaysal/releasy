@@ -5,12 +5,40 @@
 #include <time.h>
 #include <ctype.h>
 #include "changelog.h"
+#include "git_ops.h"
+#include "semver.h"
+
+static int tag_sorting_callback(const void *a, const void *b);
 
 static const char *commit_type_strings[] = {
     "feat", "fix", "docs", "style", "refactor",
     "perf", "test", "build", "ci", "chore",
     "revert", "unknown"
 };
+
+static int tag_sorting_callback(const void *a, const void *b) {
+    const char *tag_a = *(const char **)a;
+    const char *tag_b = *(const char **)b;
+    
+    // Skip 'v' prefix if present
+    if (tag_a[0] == 'v') tag_a++;
+    if (tag_b[0] == 'v') tag_b++;
+    
+    semver_t ver_a, ver_b;
+    semver_init(&ver_a);
+    semver_init(&ver_b);
+    
+    if (semver_parse(tag_a, &ver_a) != 0 || semver_parse(tag_b, &ver_b) != 0) {
+        semver_free(&ver_a);
+        semver_free(&ver_b);
+        return 0;
+    }
+    
+    int result = semver_compare(&ver_a, &ver_b);
+    semver_free(&ver_a);
+    semver_free(&ver_b);
+    return result;
+}
 
 static commit_type_t parse_commit_type(const char *type_str) {
     if (!type_str) return COMMIT_TYPE_UNKNOWN;
