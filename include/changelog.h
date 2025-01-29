@@ -31,39 +31,40 @@ typedef struct {
     char *scope;
     char *description;
     char *body;
-    char *breaking_change;
-    char *references;
-    char *hash;
+    char *footer;
+    int is_breaking;
+    char *commit_hash;
     char *author;
     char *date;
 } commit_info_t;
 
 typedef struct {
+    commit_info_t **commits;
+    size_t count;
     char *version;
-    char *date;
-    commit_info_t *commits;
-    size_t commit_count;
     char *previous_version;
-    int has_breaking_changes;
+    char *date;
 } changelog_entry_t;
 
 typedef struct {
-    char *path;
-    changelog_entry_t *entries;
-    size_t entry_count;
-    const char *template_path;
+    changelog_entry_t **entries;
+    size_t count;
+    char *file_path;
+    int include_metadata;
+    int group_by_type;
+    int include_authors;
 } changelog_t;
 
 // Function declarations
-int changelog_init(changelog_t *log, const char *path);
-int changelog_parse_commit(const char *message, commit_info_t *info);
-int changelog_generate(changelog_t *log, const char *version, const char *from_ref, const char *to_ref);
-int changelog_write(changelog_t *log, const char *version);
-void changelog_free_commit(commit_info_t *commit);
-void changelog_free_entry(changelog_entry_t *entry);
+int changelog_init(changelog_t *log, const char *file_path);
+int changelog_parse_commit(const char *message, commit_info_t *commit);
+int changelog_generate(changelog_t *log, git_repository *repo, const char *version);
+int changelog_write(changelog_t *log);
+int changelog_free_commit(commit_info_t *commit);
+int changelog_free_entry(changelog_entry_t *entry);
 void changelog_cleanup(changelog_t *log);
 
-const char *changelog_commit_type_string(commit_type_t type);
 const char *changelog_error_string(int error_code);
+const char *changelog_commit_type_string(commit_type_t type);
 
 #endif // RELEASY_CHANGELOG_H 

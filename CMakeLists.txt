@@ -17,6 +17,7 @@ set(SOURCES
     src/git_ops.c
     src/semver.c
     src/ui.c
+    src/changelog.c
 )
 
 # Create main executable
