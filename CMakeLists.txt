@@ -1,51 +1,36 @@
-cmake_minimum_required(VERSION 3.13)
-project(releasy VERSION 0.1.0 LANGUAGES C)
+cmake_minimum_required(VERSION 3.10)
+project(releasy C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
 
+# Find required packages
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBGIT2 REQUIRED libgit2)
-pkg_check_modules(JSON-C REQUIRED json-c)
+pkg_check_modules(JSONC REQUIRED json-c)
 
-add_executable(releasy
+# Add source files
+set(SOURCES
     src/main.c
-    src/semver.c
-    src/git_ops.c
     src/deploy.c
-    src/config.c
+    src/init.c
+    src/git_ops.c
+    src/semver.c
     src/ui.c
 )
 
-target_include_directories(releasy
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${LIBGIT2_INCLUDE_DIRS}
-    ${JSON-C_INCLUDE_DIRS}
-)
+# Create main executable
+add_executable(releasy ${SOURCES})
+target_include_directories(releasy PRIVATE ${JSONC_INCLUDE_DIRS} include src)
+target_link_libraries(releasy PRIVATE ${JSONC_LIBRARIES})
 
-target_link_libraries(releasy
-    PRIVATE
-    ${LIBGIT2_LIBRARIES}
-    ${JSON-C_LIBRARIES}
-)
-
-install(TARGETS releasy
-    RUNTIME DESTINATION bin
-)
-
-enable_testing()
+# Add test executables
+add_executable(test_git_ops tests/test_git_ops.c src/git_ops.c)
+target_include_directories(test_git_ops PRIVATE include src)
 
 add_executable(test_semver tests/test_semver.c src/semver.c)
-target_include_directories(test_semver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-add_test(NAME test_semver COMMAND test_semver)
+target_include_directories(test_semver PRIVATE include src)
 
-add_executable(test_git_ops tests/test_git_ops.c src/git_ops.c src/semver.c)
-target_include_directories(test_git_ops 
-    PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${LIBGIT2_INCLUDE_DIRS}
-)
-target_link_libraries(test_git_ops PRIVATE ${LIBGIT2_LIBRARIES})
-add_test(NAME test_git_ops COMMAND test_git_ops ${CMAKE_CURRENT_SOURCE_DIR}) 
+# Enable testing
+enable_testing()
+add_test(NAME test_git_ops COMMAND test_git_ops)
+add_test(NAME test_semver COMMAND test_semver) 

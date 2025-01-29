@@ -1,12 +1,11 @@
-#ifndef DEPLOY_H
-#define DEPLOY_H
+#ifndef RELEASY_DEPLOY_H
+#define RELEASY_DEPLOY_H
 
 #include <json-c/json.h>
+#include "releasy.h"
 
 // Error codes
 #define RELEASY_SUCCESS 0
-#define RELEASY_ERROR 1
-
 #define DEPLOY_ERR_CONFIG_NOT_FOUND 2
 #define DEPLOY_ERR_INVALID_CONFIG 3
 #define DEPLOY_ERR_ENV_NOT_FOUND 4
@@ -66,6 +65,8 @@ typedef struct {
     deploy_status_t status;
     int dry_run;
     int verbose;
+    char *user_name;
+    char *user_email;
 } deploy_context_t;
 
 // Function declarations
@@ -81,4 +82,4 @@ void deploy_cleanup(deploy_context_t *ctx);
 void deploy_free_hooks(deploy_hook_t *hooks, int count);
 void deploy_free_target(deploy_target_t *target);
 
-#endif // DEPLOY_H 
+#endif // RELEASY_DEPLOY_H 

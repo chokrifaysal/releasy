@@ -9,8 +9,10 @@
 #include <fcntl.h>
 #include <time.h>
 #include <errno.h>
+#include <json-c/json.h>
 #include "deploy.h"
 #include "ui.h"
+#include "releasy.h"
 
 static int deploy_parse_hook(json_object *hook_obj, deploy_hook_t *hook) {
     if (!hook_obj || !hook) return DEPLOY_ERR_INVALID_CONFIG;

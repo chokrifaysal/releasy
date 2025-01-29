@@ -4,11 +4,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <errno.h>
 #include "releasy.h"
 #include "git_ops.h"
 #include "deploy.h"
 #include "ui.h"
 #include "semver.h"
+#include "config.h"
+#include "init.h"
 
 releasy_config_t g_config = {0};
 
@@ -175,14 +178,24 @@ static int handle_deploy_command(int argc, char **argv) {
         }
     }
 
-    deploy_context_t ctx;
+    deploy_context_t ctx = {0};
     int ret = deploy_init(&ctx);
     if (ret != RELEASY_SUCCESS) {
         fprintf(stderr, "Error: Failed to initialize deployment context\n");
         return ret;
     }
 
-    ctx.is_dry_run = g_config.dry_run;
+    deploy_target_t *target = malloc(sizeof(deploy_target_t));
+    if (!target) {
+        fprintf(stderr, "Error: Failed to allocate memory for target\n");
+        return RELEASY_ERROR;
+    }
+    target->name = strdup(g_config.target_env);
+    target->next = NULL;
+    ctx.targets = target;
+    ctx.dry_run = g_config.dry_run;
+    ctx.user_name = g_config.user_name;
+    ctx.user_email = g_config.user_email;
 
     ret = deploy_load_config(&ctx, g_config.config_path);
     if (ret != RELEASY_SUCCESS) {
@@ -239,7 +252,17 @@ static int handle_rollback_command(void) {
         return ret;
     }
 
-    ctx.is_dry_run = g_config.dry_run;
+    deploy_target_t *target = malloc(sizeof(deploy_target_t));
+    if (!target) {
+        fprintf(stderr, "Error: Failed to allocate memory for target\n");
+        return RELEASY_ERROR;
+    }
+    target->name = strdup(g_config.target_env);
+    target->next = NULL;
+    ctx.targets = target;
+    ctx.dry_run = g_config.dry_run;
+    ctx.user_name = g_config.user_name;
+    ctx.user_email = g_config.user_email;
 
     ret = deploy_load_config(&ctx, g_config.config_path);
     if (ret != RELEASY_SUCCESS) {
@@ -275,6 +298,15 @@ static int handle_rollback_command(void) {
     return RELEASY_SUCCESS;
 }
 
+static int handle_init_command(const char *config_path, const char *user_name, const char *user_email) {
+    if (!user_name || !user_email) {
+        printf("Error: Git user name and email are required for initialization\n");
+        return RELEASY_ERROR;
+    }
+
+    return init_project(config_path ? config_path : "config/releasy.json", user_name, user_email);
+}
+
 int main(int argc, char **argv) {
     int ret = releasy_parse_args(argc, argv);
     if (ret != RELEASY_SUCCESS) {
@@ -306,9 +338,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(command, "rollback") == 0) {
         ret = handle_rollback_command();
     } else if (strcmp(command, "init") == 0) {
-        // TODO: Implement init command
-        printf("Init command not implemented yet\n");
-        ret = RELEASY_ERROR;
+        ret = handle_init_command(g_config.config_path, g_config.user_name, g_config.user_email);
     } else if (strcmp(command, "release") == 0) {
         // TODO: Implement release command
         printf("Release command not implemented yet\n");
