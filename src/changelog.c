@@ -51,18 +51,70 @@ static commit_type_t parse_commit_type(const char *type_str) {
     return COMMIT_TYPE_UNKNOWN;
 }
 
+#define CHANGELOG_ERR_INVALID_PATH -310
+#define CHANGELOG_ERR_INVALID_CONFIG -311
+#define CHANGELOG_ERR_INVALID_VERSION -312
+
+static int validate_file_path(const char *path) {
+    if (!path || strlen(path) == 0) return CHANGELOG_ERR_INVALID_PATH;
+    
+    // Check for directory traversal
+    if (strstr(path, "..") != NULL) return CHANGELOG_ERR_INVALID_PATH;
+    
+    // Check for absolute path
+    if (path[0] == '/') return CHANGELOG_ERR_INVALID_PATH;
+    
+    // Check file extension
+    const char *ext = strrchr(path, '.');
+    if (!ext || (strcasecmp(ext, ".md") != 0)) return CHANGELOG_ERR_INVALID_PATH;
+    
+    return RELEASY_SUCCESS;
+}
+
+static int validate_version_tag(const char *version) {
+    if (!version) return CHANGELOG_ERR_INVALID_VERSION;
+    
+    semver_t ver;
+    if (semver_parse(version, &ver) != 0) {
+        return CHANGELOG_ERR_INVALID_VERSION;
+    }
+    semver_free(&ver);
+    
+    return RELEASY_SUCCESS;
+}
+
+static int validate_config(changelog_t *log) {
+    if (!log) return CHANGELOG_ERR_INVALID_CONFIG;
+    
+    // Validate file path
+    int ret = validate_file_path(log->file_path);
+    if (ret != RELEASY_SUCCESS) return ret;
+    
+    // Validate boolean flags
+    if (log->include_metadata != 0 && log->include_metadata != 1) return CHANGELOG_ERR_INVALID_CONFIG;
+    if (log->group_by_type != 0 && log->group_by_type != 1) return CHANGELOG_ERR_INVALID_CONFIG;
+    if (log->include_authors != 0 && log->include_authors != 1) return CHANGELOG_ERR_INVALID_CONFIG;
+    if (log->backup != 0 && log->backup != 1) return CHANGELOG_ERR_INVALID_CONFIG;
+    
+    return RELEASY_SUCCESS;
+}
+
 int changelog_init(changelog_t *log, const char *file_path) {
     if (!log || !file_path) return RELEASY_ERROR;
     
+    // Validate file path before initialization
+    int ret = validate_file_path(file_path);
+    if (ret != RELEASY_SUCCESS) return ret;
+    
     memset(log, 0, sizeof(changelog_t));
     log->file_path = strdup(file_path);
-    if (!log->file_path) return RELEASY_ERROR;
+    if (!log->file_path) return CHANGELOG_ERR_MEMORY;
     
     log->include_metadata = 1;
     log->group_by_type = 1;
     log->include_authors = 1;
     
-    return RELEASY_SUCCESS;
+    return validate_config(log);
 }
 
 static int parse_conventional_commit(const char *message, commit_info_t *commit) {
@@ -328,6 +380,14 @@ static int extract_commit_metadata(git_commit *commit, commit_info_t *info) {
 
 int changelog_generate(changelog_t *log, git_repository *repo, const char *version) {
     if (!log || !repo || !version) return RELEASY_ERROR;
+    
+    // Validate version format
+    int ret = validate_version_tag(version);
+    if (ret != RELEASY_SUCCESS) return ret;
+    
+    // Validate configuration
+    ret = validate_config(log);
+    if (ret != RELEASY_SUCCESS) return ret;
 
     // Create new changelog entry
     changelog_entry_t *entry = calloc(1, sizeof(changelog_entry_t));
@@ -484,10 +544,6 @@ const char *changelog_error_string(int error_code) {
         case CHANGELOG_ERR_NO_COMMITS:
             return "No commits found";
         case CHANGELOG_ERR_INVALID_FORMAT:
-            return "Invalid commit format";
-        case CHANGELOG_ERR_FILE_ACCESS:
-            return "Failed to access changelog file";
-        case CHANGELOG_ERR_PARSE_FAILED:
             return "Failed to parse commit message";
         case CHANGELOG_ERR_GIT_WALK_FAILED:
             return "Failed to walk git commit history";
@@ -501,6 +557,12 @@ const char *changelog_error_string(int error_code) {
             return "Invalid commit range";
         case CHANGELOG_ERR_BACKUP_FAILED:
             return "Failed to create changelog backup";
+        case CHANGELOG_ERR_INVALID_PATH:
+            return "Invalid changelog file path";
+        case CHANGELOG_ERR_INVALID_CONFIG:
+            return "Invalid changelog configuration";
+        case CHANGELOG_ERR_INVALID_VERSION:
+            return "Invalid version tag format";
         default:
             return "Unknown error";
     }
